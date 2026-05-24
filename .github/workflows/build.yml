@@ -1,0 +1,87 @@
+name: 编译 ImmortalWrt 25.12 (apk 版 + 固定 MAC)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ openwrt-25.12 ]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+    - name: 检出你的仓库 (包含 .config)
+      uses: actions/checkout@v3
+
+    - name: 安装编译依赖
+      run: |
+        sudo apt update -y
+        sudo apt install -y build-essential gcc-multilib git libncurses5-dev libz-dev libssl-dev
+
+    - name: 克隆你的 ImmortalWrt 源码
+      run: |
+        git clone --depth=1 --single-branch --branch=openwrt-25.12 https://github.com/xshu998-star/immortalwrt-abram.git
+
+    - name: 应用你的 .config 配置
+      run: |
+        cd immortalwrt-abram
+        cp ../040.config .config
+
+    - name: 注入官方 apk 源
+      run: |
+        cd immortalwrt-abram
+        mkdir -p files/etc/apk
+        cat > files/etc/apk/repositories <<EOF
+        https://downloads.immortalwrt.org/releases/25.12-SNAPSHOT/packages/aarch64_cortex-a53/base/
+        https://downloads.immortalwrt.org/releases/25.12-SNAPSHOT/packages/aarch64_cortex-a53/luci/
+        https://downloads.immortalwrt.org/releases/25.12-SNAPSHOT/packages/aarch64_cortex-a53/packages/
+        https://downloads.immortalwrt.org/releases/25.12-SNAPSHOT/packages/aarch64_cortex-a53/routing/
+        https://downloads.immortalwrt.org/releases/25.12-SNAPSHOT/packages/aarch64_cortex-a53/telephony/
+        EOF
+
+    - name: 添加固定 MAC 地址脚本
+      run: |
+        cd immortalwrt-abram
+        mkdir -p files/etc/uci-defaults
+        cat > files/etc/uci-defaults/99-fix-mac <<EOF
+        #!/bin/sh
+        CPU_SERIAL=\$(grep "Serial" /proc/cpuinfo | awk -F: '{print \$2}' | tr -d '[:space:]')
+        if [ -z "\$CPU_SERIAL" ]; then
+            CPU_SERIAL=\$(md5sum /dev/mtdblock0 2>/dev/null | awk '{print \$1}')
+        fi
+        MAC="02:\$(echo "\$CPU_SERIAL" | md5sum | cut -c1-10 | sed 's/../&:/g' | sed 's/:\$//')"
+        uci set network.lan.macaddr="\$MAC"
+        uci commit network
+        /etc/init.d/network restart
+        rm /etc/uci-defaults/99-fix-mac
+        EOF
+        chmod +x files/etc/uci-defaults/99-fix-mac
+
+    - name: 更新 Feeds
+      run: |
+        cd immortalwrt-abram
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+
+    - name: 生成默认配置
+      run: |
+        cd immortalwrt-abram
+        make defconfig
+
+    - name: 下载源码包
+      run: |
+        cd immortalwrt-abram
+        make download -j8 || true
+
+    - name: 正式编译 (abram 经典两步法)
+      run: |
+        cd immortalwrt-abram
+        make V=s -j$(nproc)
+        make V=s -j1
+
+    - name: 上传固件到 Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: immortalwrt-firmware
+        path: |
+          immortalwrt-abram/bin/targets/airoha/an7581/*.img.gz
+          immortalwrt-abram/bin/targets/airoha/an7581/*.bin
