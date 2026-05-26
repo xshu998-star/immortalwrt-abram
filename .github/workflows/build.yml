@@ -1,4 +1,4 @@
-name: 编译 ImmortalWrt 25.12 (APK + MTK HNAT Ultimate)
+name: 编译 ImmortalWrt 25.12 (AN7581 NPU Debug Ultimate)
 
 on:
   workflow_dispatch:
@@ -15,7 +15,7 @@ jobs:
 
     steps:
 
-    - name: 检出你的仓库
+    - name: 检出仓库
       uses: actions/checkout@v4
 
     - name: 初始化编译环境
@@ -87,7 +87,6 @@ jobs:
           swig \
           texinfo \
           uglifyjs \
-          upx-ucl \
           unzip \
           vim \
           wget \
@@ -124,6 +123,27 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
+    - name: 搜索源码中的 HNAT/NPU
+      run: |
+        cd immortalwrt-abram
+
+        echo "========== FIND HNAT =========="
+        find package -iname "*hnat*" || true
+        find feeds -iname "*hnat*" || true
+
+        echo "========== FIND NPU =========="
+        find package -iname "*npu*" || true
+        find feeds -iname "*npu*" || true
+
+        echo "========== GREP HNAT =========="
+        grep -R "KernelPackage.*hnat" package feeds 2>/dev/null || true
+
+        echo "========== GREP MTK-HNAT =========="
+        grep -R "mtk-hnat" package feeds 2>/dev/null || true
+
+        echo "========== GREP EN7581 =========="
+        grep -R "en7581" target package feeds 2>/dev/null || true
+
     - name: 生成 defconfig
       run: |
         cd immortalwrt-abram
@@ -143,8 +163,14 @@ jobs:
         echo "========== NFTABLES =========="
         grep CONFIG_PACKAGE_nftables .config || true
 
+        echo "========== FLOW OFFLOAD =========="
+        grep CONFIG_PACKAGE_kmod-nft-offload .config || true
+
         echo "========== TUN =========="
         grep CONFIG_PACKAGE_kmod-tun .config || true
+
+        echo "========== NPU FIRMWARE =========="
+        grep "npu" .config || true
 
     - name: 注入 APK 仓库
       run: |
@@ -161,7 +187,7 @@ jobs:
         https://downloads.immortalwrt.org/snapshots/packages/aarch64_cortex-a53/telephony/packages.adb
         EOF
 
-    - name: 强制 APK/Wget 使用 IPv4
+    - name: 强制 IPv4
       run: |
         cd immortalwrt-abram
 
@@ -210,15 +236,21 @@ jobs:
 
         make -j$(nproc) || make -j1 V=s
 
-    - name: 验证 HNAT 模块
+    - name: 检查编译结果
       run: |
         cd immortalwrt-abram
 
-        echo "========== 查找 HNAT ko =========="
-        find build_dir -name "*hnat*.ko" || true
+        echo "========== 查找 HNAT =========="
+        find build_dir -name "*hnat*" || true
+
+        echo "========== 查找 NPU =========="
+        find build_dir -name "*npu*" || true
+
+        echo "========== 查找 FLOW =========="
+        find build_dir -name "*flow*" || true
 
         echo "========== 查找 NFT =========="
-        find build_dir -name "*nft*.ko" || true
+        find build_dir -name "*nft*" || true
 
     - name: 查看固件大小
       run: |
