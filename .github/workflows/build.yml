@@ -1,4 +1,4 @@
-name: 编译 ImmortalWrt 25.12 (APK + MTK HNAT)
+name: 编译 ImmortalWrt 25.12 (APK + MTK HNAT Ultimate)
 
 on:
   workflow_dispatch:
@@ -6,40 +6,107 @@ on:
     branches:
       - openwrt-25.12
 
+env:
+  TZ: Asia/Shanghai
+
 jobs:
   build:
     runs-on: ubuntu-22.04
 
     steps:
+
     - name: 检出你的仓库
       uses: actions/checkout@v4
 
-    - name: 安装编译依赖
+    - name: 初始化编译环境
+      env:
+        DEBIAN_FRONTEND: noninteractive
       run: |
         sudo apt update
+
         sudo apt install -y \
-          build-essential \
-          clang \
-          flex \
+          ack \
+          antlr3 \
+          asciidoc \
+          autoconf \
+          automake \
+          autopoint \
+          binutils \
           bison \
-          g++ \
+          build-essential \
+          bzip2 \
+          ccache \
+          clang \
+          cmake \
+          cpio \
+          curl \
+          device-tree-compiler \
+          fastjar \
+          flex \
           gawk \
-          gcc-multilib \
           gettext \
+          gcc-multilib \
+          g++-multilib \
           git \
+          gperf \
+          haveged \
+          help2man \
+          intltool \
+          libc6-dev-i386 \
+          libelf-dev \
+          libglib2.0-dev \
+          libgmp3-dev \
+          libltdl-dev \
+          libmpc-dev \
+          libmpfr-dev \
           libncurses5-dev \
+          libncursesw5-dev \
+          libpython3-dev \
+          libreadline-dev \
           libssl-dev \
+          libtool \
+          lrzsz \
+          mkisofs \
+          msmtp \
+          nano \
+          ninja-build \
+          p7zip \
+          p7zip-full \
+          patch \
+          pkgconf \
           python3 \
+          python3-pip \
+          python3-ply \
+          python3-docutils \
           python3-pyelftools \
+          qemu-utils \
           rsync \
+          scons \
+          squashfs-tools \
+          subversion \
+          swig \
+          texinfo \
+          uglifyjs \
+          upx-ucl \
           unzip \
-          zlib1g-dev \
-          file \
-          wget
+          vim \
+          wget \
+          xmlto \
+          xxd \
+          zlib1g-dev
+
+        sudo timedatectl set-timezone "$TZ"
+
+    - name: 启用 ccache
+      run: |
+        echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
+        echo "CCACHE_COMPRESS=1" >> $GITHUB_ENV
+        echo "CCACHE_MAXSIZE=2G" >> $GITHUB_ENV
 
     - name: 克隆源码
       run: |
-        git clone --depth=1 \
+        git clone \
+          --depth=1 \
           --single-branch \
           --branch=openwrt-25.12 \
           https://github.com/xshu998-star/immortalwrt-abram.git
@@ -47,23 +114,37 @@ jobs:
     - name: 应用 040.config
       run: |
         cd immortalwrt-abram
+
         cp ../040.config .config
 
-    - name: 更新 Feeds
+    - name: 更新 feeds
       run: |
         cd immortalwrt-abram
+
         ./scripts/feeds update -a
-        ./scripts/feeds install -f -a
+        ./scripts/feeds install -a
 
     - name: 生成 defconfig
       run: |
         cd immortalwrt-abram
+
         make defconfig
 
-    - name: 验证 HNAT 是否启用
+    - name: 验证关键配置
       run: |
         cd immortalwrt-abram
-        grep CONFIG_PACKAGE_kmod-mtk-hnat .config
+
+        echo "========== HNAT =========="
+        grep CONFIG_PACKAGE_kmod-mtk-hnat .config || true
+
+        echo "========== FIREWALL4 =========="
+        grep CONFIG_PACKAGE_firewall4 .config || true
+
+        echo "========== NFTABLES =========="
+        grep CONFIG_PACKAGE_nftables .config || true
+
+        echo "========== TUN =========="
+        grep CONFIG_PACKAGE_kmod-tun .config || true
 
     - name: 注入 APK 仓库
       run: |
@@ -80,7 +161,7 @@ jobs:
         https://downloads.immortalwrt.org/snapshots/packages/aarch64_cortex-a53/telephony/packages.adb
         EOF
 
-    - name: 强制 wget/apk 使用 IPv4
+    - name: 强制 APK/Wget 使用 IPv4
       run: |
         cd immortalwrt-abram
 
@@ -90,7 +171,7 @@ jobs:
         inet4_only = on
         EOF
 
-    - name: 固定 MAC 地址
+    - name: 添加固定 MAC
       run: |
         cd immortalwrt-abram
 
@@ -105,7 +186,9 @@ jobs:
             CPU_SERIAL=\$(md5sum /dev/mtdblock0 2>/dev/null | awk '{print \$1}')
         fi
 
-        MAC="02:\$(echo "\$CPU_SERIAL" | md5sum | cut -c1-10 | sed 's/../&:/g' | sed 's/:\$//')"
+        HASH=\$(echo "\$CPU_SERIAL" | md5sum | cut -c1-10)
+
+        MAC="02:\$(echo \$HASH | sed 's/../&:/g' | sed 's/:\$//')"
 
         uci set network.lan.macaddr="\$MAC"
         uci commit network
@@ -118,18 +201,30 @@ jobs:
     - name: 下载源码包
       run: |
         cd immortalwrt-abram
+
         make download -j$(nproc)
 
     - name: 编译固件
       run: |
         cd immortalwrt-abram
+
         make -j$(nproc) || make -j1 V=s
 
-    - name: 检查 HNAT 模块
+    - name: 验证 HNAT 模块
       run: |
         cd immortalwrt-abram
 
-        find bin/targets/ -name "*mtk*hnat*" || true
+        echo "========== 查找 HNAT ko =========="
+        find build_dir -name "*hnat*.ko" || true
+
+        echo "========== 查找 NFT =========="
+        find build_dir -name "*nft*.ko" || true
+
+    - name: 查看固件大小
+      run: |
+        cd immortalwrt-abram
+
+        du -h bin/targets/airoha/an7581/* || true
 
     - name: 上传固件
       uses: actions/upload-artifact@v4
@@ -138,3 +233,14 @@ jobs:
         path: |
           immortalwrt-abram/bin/targets/airoha/an7581/*.bin
           immortalwrt-abram/bin/targets/airoha/an7581/*.img.gz
+
+    - name: 上传日志
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: immortalwrt-logs
+        path: |
+          immortalwrt-abram/.config
+          immortalwrt-abram/bin/targets/airoha/an7581/config.buildinfo
+          immortalwrt-abram/bin/targets/airoha/an7581/feeds.buildinfo
+          immortalwrt-abram/bin/targets/airoha/an7581/version.buildinfo
